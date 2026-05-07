@@ -464,6 +464,15 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
 
+#ifdef USERPROG
+  t->exit_status = 0;
+  list_init (&t->child_list);
+  t->my_child_entry = NULL;
+  t->next_fd = 2;              /* 0 = stdin, 1 = stdout */
+  memset (t->fd_table, 0, sizeof t->fd_table);
+  t->exec_file = NULL;
+#endif
+
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
   intr_set_level (old_level);
