@@ -6,347 +6,267 @@
 #include "threads/synch.h"
 #include "threads/vaddr.h"
 #include "userprog/pagedir.h"
-#include "userprog/process.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
 #include "devices/shutdown.h"
 #include "devices/input.h"
+#include "userprog/process.h"
 
-static void syscall_handler (struct intr_frame *);
+static void syscall_handler(struct intr_frame *);
+void halt(void);
+void exit(int status);
+tid_t exec(const char *cmd_line);
+int wait(tid_t pid);
+void check_valid_ptr(const void *ptr);
+void check_valid_string(const void *str);
+int open(const char *file);
+int filesize(int fd);
+int read(int fd, void *buffer, unsigned size);
+int write(int fd, const void *buffer, unsigned size);
+void seek(int fd, unsigned position);
+int tell(int fd);
+void close(int fd);
 
-/* Prototypes for individual syscall implementations. */
-static void     sys_halt   (void);
-static void     sys_exit   (int status);
-static tid_t    sys_exec   (const char *cmd_line);
-static int      sys_wait   (tid_t pid);
-static bool     sys_create (const char *file, unsigned initial_size);
-static bool     sys_remove (const char *file);
-static int      sys_open   (const char *file);
-static int      sys_filesize (int fd);
-static int      sys_read   (int fd, void *buffer, unsigned size);
-static int      sys_write  (int fd, const void *buffer, unsigned size);
-static void     sys_seek   (int fd, unsigned position);
-static unsigned sys_tell   (int fd);
-static void     sys_close  (int fd);
-
-/* Helpers. */
-static void check_valid_ptr (const void *ptr);
-static void check_valid_string (const void *str);
-static void check_valid_buffer (const void *buf, unsigned size);
-static struct file *fd_to_file (int fd);
-
-/* Global filesystem lock — Pintos filesys is not thread-safe. */
 static struct lock filesys_lock;
-
-void
-syscall_init (void)
+void syscall_init(void)
 {
-  lock_init (&filesys_lock);
-  intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
+  lock_init(&filesys_lock);
+  intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall");
 }
 
 static void
-syscall_handler (struct intr_frame *f)
+syscall_handler(struct intr_frame *f UNUSED)
 {
   uint32_t *args = (uint32_t *) f->esp;
 
-  /* Validate the full 4-byte word for the syscall number. */
-  check_valid_ptr ((const void *) args);
-  check_valid_ptr ((const void *) ((uint8_t *) args + 3));
+  check_valid_ptr((const void *) args);
+  check_valid_ptr((const void *) ((uint8_t *) args + 3));
 
-  int syscall_number = (int) args[0];
+  int syscall_number = args[0];
 
   switch (syscall_number)
-    {
-    case SYS_HALT:
-      sys_halt ();
-      break;
+  {
+  case SYS_HALT:
+    halt();
+    break;
 
-    case SYS_EXIT:
-      check_valid_ptr ((const void *) (args + 1));
-      check_valid_ptr ((const void *) ((uint8_t *) (args + 1) + 3));
-      sys_exit ((int) args[1]);
-      break;
+  case SYS_EXIT:
+    check_valid_ptr((const void *)(args + 1));
+    check_valid_ptr((const void *)((uint8_t *)(args + 1) + 3));
+    exit((int)args[1]);
+    break;
 
-    case SYS_EXEC:
-      check_valid_ptr ((const void *) (args + 1));
-      check_valid_ptr ((const void *) ((uint8_t *) (args + 1) + 3));
-      check_valid_string ((const char *) args[1]);
-      f->eax = (uint32_t) sys_exec ((const char *) args[1]);
-      break;
+  case SYS_EXEC:
+    check_valid_ptr((const void *)(args + 1));
+    check_valid_ptr((const void *)((uint8_t *)(args + 1) + 3));
+    check_valid_string((const char *)args[1]);
+    f->eax = exec((const char *)args[1]);
+    break;
 
-    case SYS_WAIT:
-      check_valid_ptr ((const void *) (args + 1));
-      check_valid_ptr ((const void *) ((uint8_t *) (args + 1) + 3));
-      f->eax = (uint32_t) sys_wait ((tid_t) args[1]);
-      break;
+  case SYS_WAIT:
+    check_valid_ptr((const void *)(args + 1));
+    check_valid_ptr((const void *)((uint8_t *)(args + 1) + 3));
+    f->eax = wait((tid_t)args[1]);
+    break;
 
-    case SYS_CREATE:
-      check_valid_ptr ((const void *) (args + 1));
-      check_valid_ptr ((const void *) ((uint8_t *) (args + 2) + 3));
-      check_valid_string ((const char *) args[1]);
-      f->eax = (uint32_t) sys_create ((const char *) args[1],
-                                       (unsigned) args[2]);
-      break;
+  case SYS_CREATE:
+    check_valid_ptr((const void *)(args + 1));
+    check_valid_ptr((const void *)((uint8_t *)(args + 2) + 3));
+    check_valid_string((const char *)args[1]);
+    lock_acquire(&filesys_lock);
+    f->eax = filesys_create((const char *)args[1], (unsigned)args[2]);
+    lock_release(&filesys_lock);
+    break;
 
-    case SYS_REMOVE:
-      check_valid_ptr ((const void *) (args + 1));
-      check_valid_ptr ((const void *) ((uint8_t *) (args + 1) + 3));
-      check_valid_string ((const char *) args[1]);
-      f->eax = (uint32_t) sys_remove ((const char *) args[1]);
-      break;
+  case SYS_REMOVE:
+    check_valid_ptr((const void *)(args + 1));
+    check_valid_ptr((const void *)((uint8_t *)(args + 1) + 3));
+    check_valid_string((const char *)args[1]);
+    lock_acquire(&filesys_lock);
+    f->eax = filesys_remove((const char *)args[1]);
+    lock_release(&filesys_lock);
+    break;
 
-    case SYS_OPEN:
-      check_valid_ptr ((const void *) (args + 1));
-      check_valid_ptr ((const void *) ((uint8_t *) (args + 1) + 3));
-      check_valid_string ((const char *) args[1]);
-      f->eax = (uint32_t) sys_open ((const char *) args[1]);
-      break;
+  case SYS_OPEN:
+    check_valid_ptr((const void *)(args + 1));
+    check_valid_ptr((const void *)((uint8_t *)(args + 1) + 3));
+    check_valid_string((const char *)args[1]);
+    f->eax = open((const char *)args[1]);
+    break;
 
-    case SYS_FILESIZE:
-      check_valid_ptr ((const void *) (args + 1));
-      check_valid_ptr ((const void *) ((uint8_t *) (args + 1) + 3));
-      f->eax = (uint32_t) sys_filesize ((int) args[1]);
-      break;
+  case SYS_FILESIZE:
+    check_valid_ptr((const void *)(args + 1));
+    check_valid_ptr((const void *)((uint8_t *)(args + 1) + 3));
+    f->eax = filesize((int)args[1]);
+    break;
 
-    case SYS_READ:
-      check_valid_ptr ((const void *) (args + 1));
-      check_valid_ptr ((const void *) ((uint8_t *) (args + 3) + 3));
-      check_valid_buffer ((const void *) args[2], (unsigned) args[3]);
-      f->eax = (uint32_t) sys_read ((int) args[1], (void *) args[2],
-                                     (unsigned) args[3]);
-      break;
+  case SYS_READ:
+    check_valid_ptr((const void *)(args + 1));
+    check_valid_ptr((const void *)((uint8_t *)(args + 3) + 3));
+    f->eax = read((int)args[1], (void *)args[2], (unsigned)args[3]);
+    break;
 
-    case SYS_WRITE:
-      check_valid_ptr ((const void *) (args + 1));
-      check_valid_ptr ((const void *) ((uint8_t *) (args + 3) + 3));
-      check_valid_buffer ((const void *) args[2], (unsigned) args[3]);
-      f->eax = (uint32_t) sys_write ((int) args[1], (const void *) args[2],
-                                      (unsigned) args[3]);
-      break;
+  case SYS_WRITE:
+    check_valid_ptr((const void *)(args + 1));
+    check_valid_ptr((const void *)((uint8_t *)(args + 3) + 3));
+    f->eax = write((int)args[1], (const void *)args[2], (unsigned)args[3]);
+    break;
 
-    case SYS_SEEK:
-      check_valid_ptr ((const void *) (args + 1));
-      check_valid_ptr ((const void *) ((uint8_t *) (args + 2) + 3));
-      sys_seek ((int) args[1], (unsigned) args[2]);
-      break;
+  case SYS_SEEK:
+    check_valid_ptr((const void *)(args + 1));
+    check_valid_ptr((const void *)((uint8_t *)(args + 2) + 3));
+    seek((int)args[1], (unsigned)args[2]);
+    break;
 
-    case SYS_TELL:
-      check_valid_ptr ((const void *) (args + 1));
-      check_valid_ptr ((const void *) ((uint8_t *) (args + 1) + 3));
-      f->eax = (uint32_t) sys_tell ((int) args[1]);
-      break;
+  case SYS_TELL:
+    check_valid_ptr((const void *)(args + 1));
+    check_valid_ptr((const void *)((uint8_t *)(args + 1) + 3));
+    f->eax = tell((int)args[1]);
+    break;
 
-    case SYS_CLOSE:
-      check_valid_ptr ((const void *) (args + 1));
-      check_valid_ptr ((const void *) ((uint8_t *) (args + 1) + 3));
-      sys_close ((int) args[1]);
-      break;
+  case SYS_CLOSE:
+    check_valid_ptr((const void *)(args + 1));
+    check_valid_ptr((const void *)((uint8_t *)(args + 1) + 3));
+    close((int)args[1]);
+    break;
 
-    default:
-      sys_exit (-1);
-      break;
-    }
+  default:
+    exit(-1);
+    break;
+  }
 }
-
-/* ----------------------------------------------------------------
-   Pointer / memory validation helpers
-   ---------------------------------------------------------------- */
-
-static void
-check_valid_ptr (const void *ptr)
+void halt()
 {
-  if (ptr == NULL || !is_user_vaddr (ptr)
-      || pagedir_get_page (thread_current ()->pagedir, ptr) == NULL)
-    sys_exit (-1);
+  shutdown_power_off();
 }
-
-static void
-check_valid_string (const void *str)
+void exit(int status)
 {
-  check_valid_ptr (str);
-  const char *s = (const char *) str;
-  while (*s != '\0')
-    {
-      s++;
-      check_valid_ptr ((const void *) s);
-    }
-}
-
-static void
-check_valid_buffer (const void *buf, unsigned size)
-{
-  const uint8_t *p = (const uint8_t *) buf;
-  unsigned i;
-  for (i = 0; i < size; i++)
-    check_valid_ptr ((const void *) (p + i));
-}
-
-/* Return the struct file * for a given fd, or NULL if invalid. */
-static struct file *
-fd_to_file (int fd)
-{
-  if (fd < 2 || fd >= MAX_FD)
-    return NULL;
-  return thread_current ()->fd_table[fd];
-}
-
-/* ----------------------------------------------------------------
-   Syscall implementations
-   ---------------------------------------------------------------- */
-
-static void
-sys_halt (void)
-{
-  shutdown_power_off ();
-}
-
-static void
-sys_exit (int status)
-{
-  struct thread *cur = thread_current ();
+  struct thread *cur = thread_current();
   cur->exit_status = status;
-  thread_exit ();
+  thread_exit();
+}
+tid_t exec(const char *cmd_line)
+{
+  check_valid_string(cmd_line);
+  return process_execute(cmd_line);
+}
+int wait(tid_t pid)
+{
+  return process_wait(pid);
 }
 
-static tid_t
-sys_exec (const char *cmd_line)
+void check_valid_ptr(const void *ptr)
 {
-  return process_execute (cmd_line);
+  if (ptr == NULL)
+  {
+    exit(-1);
+  }
+  if (!is_user_vaddr(ptr))
+  {
+    exit(-1);
+  }
+  void *page_ptr = pagedir_get_page(thread_current()->pagedir, ptr);
+  if (page_ptr == NULL)
+  {
+    exit(-1);
+  }
 }
 
-static int
-sys_wait (tid_t pid)
+void check_valid_string(const void *str)
 {
-  return process_wait (pid);
+  check_valid_ptr(str);
+  char *ptr = (char *)str;
+  while (*ptr != '\0')
+  {
+    ptr++;
+    check_valid_ptr(ptr);
+  }
 }
-
-static bool
-sys_create (const char *file, unsigned initial_size)
+int open(const char *file)
 {
-  lock_acquire (&filesys_lock);
-  bool ok = filesys_create (file, initial_size);
-  lock_release (&filesys_lock);
-  return ok;
-}
-
-static bool
-sys_remove (const char *file)
-{
-  lock_acquire (&filesys_lock);
-  bool ok = filesys_remove (file);
-  lock_release (&filesys_lock);
-  return ok;
-}
-
-static int
-sys_open (const char *file)
-{
-  lock_acquire (&filesys_lock);
-  struct file *f = filesys_open (file);
-  lock_release (&filesys_lock);
-
+  check_valid_string(file);
+  lock_acquire(&filesys_lock);
+  struct file *f = filesys_open(file);
+  lock_release(&filesys_lock);
   if (f == NULL)
     return -1;
 
-  struct thread *cur = thread_current ();
+  struct thread *cur = thread_current();
   int fd = cur->next_fd;
-  if (fd >= MAX_FD)
-    {
-      file_close (f);
-      return -1;
-    }
+  if (fd >= MAX_FD) {
+    file_close(f);
+    return -1;
+  }
   cur->fd_table[fd] = f;
   cur->next_fd++;
   return fd;
 }
 
-static int
-sys_filesize (int fd)
+int filesize(int fd)
 {
-  struct file *f = fd_to_file (fd);
-  if (f == NULL)
+  if (fd < 2 || fd >= MAX_FD || thread_current()->fd_table[fd] == NULL)
     return -1;
-  lock_acquire (&filesys_lock);
-  int size = file_length (f);
-  lock_release (&filesys_lock);
+  lock_acquire(&filesys_lock);
+  int size = file_length(thread_current()->fd_table[fd]);
+  lock_release(&filesys_lock);
   return size;
 }
-
-static int
-sys_read (int fd, void *buffer, unsigned size)
+int read(int fd, void *buffer, unsigned size)
 {
-  if (fd == 0)
-    {
-      /* Read from stdin. */
-      uint8_t *buf = (uint8_t *) buffer;
-      unsigned i;
-      for (i = 0; i < size; i++)
-        buf[i] = input_getc ();
-      return (int) size;
-    }
-
-  struct file *f = fd_to_file (fd);
-  if (f == NULL)
+  check_valid_ptr(buffer);
+  check_valid_ptr(buffer + size - 1);
+  if (fd == 0) {
+    uint8_t *buf = (uint8_t *) buffer;
+    unsigned i;
+    for (i = 0; i < size; i++)
+      buf[i] = input_getc();
+    return size;
+  }
+  if (fd < 2 || fd >= MAX_FD || thread_current()->fd_table[fd] == NULL)
     return -1;
-
-  lock_acquire (&filesys_lock);
-  int bytes = file_read (f, buffer, size);
-  lock_release (&filesys_lock);
+  lock_acquire(&filesys_lock);
+  int bytes = file_read(thread_current()->fd_table[fd], buffer, size);
+  lock_release(&filesys_lock);
   return bytes;
 }
-
-static int
-sys_write (int fd, const void *buffer, unsigned size)
+int write(int fd, const void *buffer, unsigned size)
 {
-  if (fd == 1)
-    {
-      /* Write to stdout. */
-      putbuf (buffer, size);
-      return (int) size;
-    }
-
-  struct file *f = fd_to_file (fd);
-  if (f == NULL)
+  check_valid_ptr(buffer);
+  check_valid_ptr(buffer + size - 1);
+  if (fd == 1) {
+    putbuf(buffer, size);
+    return size;
+  }
+  if (fd < 2 || fd >= MAX_FD || thread_current()->fd_table[fd] == NULL)
     return -1;
-
-  lock_acquire (&filesys_lock);
-  int bytes = file_write (f, buffer, size);
-  lock_release (&filesys_lock);
+  lock_acquire(&filesys_lock);
+  int bytes = file_write(thread_current()->fd_table[fd], buffer, size);
+  lock_release(&filesys_lock);
   return bytes;
 }
-
-static void
-sys_seek (int fd, unsigned position)
+void seek(int fd, unsigned position)
 {
-  struct file *f = fd_to_file (fd);
-  if (f == NULL)
+  if (fd < 2 || fd >= MAX_FD || thread_current()->fd_table[fd] == NULL)
     return;
-  lock_acquire (&filesys_lock);
-  file_seek (f, position);
-  lock_release (&filesys_lock);
+  lock_acquire(&filesys_lock);
+  file_seek(thread_current()->fd_table[fd], position);
+  lock_release(&filesys_lock);
 }
-
-static unsigned
-sys_tell (int fd)
+int tell(int fd)
 {
-  struct file *f = fd_to_file (fd);
-  if (f == NULL)
-    return 0;
-  lock_acquire (&filesys_lock);
-  unsigned pos = (unsigned) file_tell (f);
-  lock_release (&filesys_lock);
+  if (fd < 2 || fd >= MAX_FD || thread_current()->fd_table[fd] == NULL)
+    return -1;
+  lock_acquire(&filesys_lock);
+  int pos = file_tell(thread_current()->fd_table[fd]);
+  lock_release(&filesys_lock);
   return pos;
 }
-
-static void
-sys_close (int fd)
+void close(int fd)
 {
-  struct file *f = fd_to_file (fd);
-  if (f == NULL)
+  if (fd < 2 || fd >= MAX_FD || thread_current()->fd_table[fd] == NULL)
     return;
-  thread_current ()->fd_table[fd] = NULL;
-  lock_acquire (&filesys_lock);
-  file_close (f);
-  lock_release (&filesys_lock);
+  lock_acquire(&filesys_lock);
+  file_close(thread_current()->fd_table[fd]);
+  lock_release(&filesys_lock);
+  thread_current()->fd_table[fd] = NULL;
 }
