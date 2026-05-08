@@ -42,13 +42,11 @@ process_execute (const char *file_name)
 
   tid_t tid;
 
-  /* Store cmd_line right after the struct in the same page */
   info->cmd_line = (char *) info + sizeof(struct exec_info);
   strlcpy(info->cmd_line, file_name, PGSIZE - sizeof(struct exec_info));
   sema_init(&info->sema, 0);
   info->load_success = false;
 
-  /* Create a child_entry so parent can track this child */
   struct child_entry *ce = malloc(sizeof(struct child_entry));
   if (ce == NULL) {
     palloc_free_page(info);
@@ -102,14 +100,12 @@ start_process (void *file_name_)
   struct intr_frame if_;
   bool success;
 
-  /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (info->cmd_line, &if_.eip, &if_.esp);
 
-  /* If load failed, quit. */
   info->load_success = success;
   if (success)
     thread_current()->my_child_entry = info->child;

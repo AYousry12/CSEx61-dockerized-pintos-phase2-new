@@ -35,12 +35,12 @@ typedef int tid_t;
    can retrieve exit status. */
 struct child_entry
   {
-    tid_t tid;                          /* Child's thread id. */
-    int exit_status;                    /* Child's exit status. */
-    bool is_alive;                      /* True while child is running. */
-    bool is_waiting;                    /* True if parent already waiting. */
-    struct semaphore wait_sema;         /* Parent downs this to wait. */
-    struct list_elem elem;              /* Element in parent's child_list. */
+    tid_t tid;                          // Child's thread id.
+    int exit_status;                    // Child's exit status.
+    bool is_alive;                      // True while child is running.
+    bool is_waiting;                    // True if parent already waiting. 
+    struct semaphore wait_sema;         // Parent downs this to wait.
+    struct list_elem elem;              // Element in parent's child_list.
   };
 
 /* A kernel thread or user process.
@@ -114,13 +114,13 @@ struct thread
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
-    uint32_t *pagedir;                  /* Page directory. */
-    int exit_status;                    /* Exit status for parent. */
-    struct list child_list;             /* List of child_entry structs. */
-    struct child_entry *my_child_entry; /* Entry in parent's child_list. */
-    struct file *fd_table[MAX_FD];      /* Open file descriptors. */
-    int next_fd;                        /* Next fd to allocate. */
-    struct file *exec_file;             /* Executable file (deny write). */
+    uint32_t *pagedir;                  // Page directory.
+    int exit_status;                    // Exit status for parent.
+    struct list child_list;             // List of child_entry structs.
+    struct child_entry *my_child_entry; // Entry in parent's child_list.
+    struct file *fd_table[MAX_FD];      // Open file descriptors.
+    int next_fd;                        // Next fd to allocate.
+    struct file *exec_file;             // Executable file (deny write).
 #endif
 
     /* Owned by thread.c. */
